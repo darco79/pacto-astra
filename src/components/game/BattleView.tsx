@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { act, chooseEnemyAction, makeAlly, makeEnemy, startBattle } from "@/game/combat";
+import { fightXp, nextChapterBattle } from "@/game/content";
 import { sfx } from "@/game/audio";
 import { FIGHTER } from "@/game/roster";
-import { squadSynergy } from "@/game/synergy";
-import { useGame } from "@/game/store";
+import { squadSynergy, leaderAura } from "@/game/synergy";
+import { localDay, useGame } from "@/game/store";
 import type { BattleSetup, BattleState, Ev, SkillKind, Unit } from "@/game/types";
 import { Btn, Portrait, type Floater } from "./ui";
 
@@ -12,10 +13,26 @@ function createBattle(setup: BattleSetup) {
   const ids = team.filter((id): id is string => !!id && !!owned[id]);
   const allies = ids.map((id) => makeAlly(id, owned[id]));
   const enemies = setup.spawns.map((spawn, index) => makeEnemy(spawn, index));
-  return startBattle({ allies, enemies, mod: setup.mod, synergy: squadSynergy(ids.map((id) => FIGHTER[id])) });
+  const leaderId = team[0] && owned[team[0]] ? team[0] : null;
+  const leader = leaderId && FIGHTER[leaderId] ? leaderAura(FIGHTER[leaderId].role) : null;
+  return startBattle({
+    allies,
+    enemies,
+    mod: setup.mod,
+    synergy: squadSynergy(ids.map((id) => FIGHTER[id])),
+    leader,
+  });
 }
 
-export function BattleView({ setup, onExit }: { setup: BattleSetup; onExit: () => void }) {
+export function BattleView({
+  setup,
+  onExit,
+  onAdvance,
+}: {
+  setup: BattleSetup;
+  onExit: () => void;
+  onAdvance: (next: BattleSetup) => void;
+}) {
   const [battle, setBattle] = useState<BattleState>(() => createBattle(setup));
   const [busy, setBusy] = useState(false);
   const [focus, setFocus] = useState<string | null>(null);
@@ -23,7 +40,9 @@ export function BattleView({ setup, onExit }: { setup: BattleSetup; onExit: () =
   const [flash, setFlash] = useState<Set<string>>(new Set());
   const [shaking, setShaking] = useState(false);
   const [askQuit, setAskQuit] = useState(false);
+  const [loot, setLoot] = useState<{ first: boolean; crystals: number; orbs: number; xp: number; grant?: string } | null>(null);
   const claimed = useRef(false);
+  const paidFirst = useRef(false);
   const cheered = useRef(false);
   const floatSeq = useRef(1);
   const timers = useRef<number[]>([]);
@@ -38,11 +57,29 @@ export function BattleView({ setup, onExit }: { setup: BattleSetup; onExit: () =
   }, []);
 
   useEffect(() => {
-    if (battle.phase === "victory" && !cheered.current) {
+    if (battle.phase !== "victory") return;
+    if (!cheered.current) {
       cheered.current = true;
       sfx("win");
     }
-  }, [battle.phase]);
+    if (claimed.current) return;
+    claimed.current = true;
+    const state = useGame.getState();
+    const story = Boolean(setup.chapterId && setup.chapterId !== "pozo");
+    const first = story && !paidFirst.current && !state.cleared.includes(setup.chapterId as string);
+    const wellPaid = setup.chapterId === "pozo" && state.bossDay === localDay();
+    const pack = wellPaid ? { crystals: 0, orbs: 0 } : first || !setup.replay ? setup.rewards : setup.replay;
+    const xp = wellPaid ? 0 : fightXp(pack, first);
+    if (first) paidFirst.current = true;
+    useGame.getState().grantVictory({
+      chapterId: setup.chapterId,
+      crystals: pack.crystals,
+      orbs: pack.orbs,
+      grant: first ? setup.rewards.grant : undefined,
+      xp,
+    });
+    setLoot({ first, crystals: pack.crystals, orbs: pack.orbs, xp, grant: first ? setup.rewards.grant : undefined });
+  }, [battle.phase, setup]);
 
   const actor = battle.units.find((unit) => unit.iid === battle.actorId) ?? null;
   const enemies = battle.units.filter((unit) => unit.side === "enemy");
@@ -125,31 +162,28 @@ export function BattleView({ setup, onExit }: { setup: BattleSetup; onExit: () =
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  function finish(retry = false) {
-    if (retry) {
-      claimed.current = false;
-      cheered.current = false;
-      setBattle(createBattle(setup));
-      setBusy(false);
-      setFloats([]);
-      setAskQuit(false);
-      return;
-    }
-    if (battle.phase === "victory" && !claimed.current) {
-      claimed.current = true;
-      useGame.getState().grantVictory({
-        chapterId: setup.chapterId,
-        crystals: setup.rewards.crystals,
-        orbs: setup.rewards.orbs,
-        grant: setup.rewards.grant,
-      });
-    }
-    onExit();
+  function repeat() {
+    claimed.current = false;
+    cheered.current = false;
+    setLoot(null);
+    setBattle(createBattle(setup));
+    setBusy(false);
+    setFloats([]);
+    setAskQuit(false);
   }
 
-  const synergy = squadSynergy(
-    useGame.getState().team.filter((id): id is string => !!id).map((id) => FIGHTER[id]),
-  );
+  function advance() {
+    const next = nextChapterBattle(setup.chapterId);
+    if (!next) return;
+    onAdvance(next);
+  }
+
+  const next = nextChapterBattle(setup.chapterId);
+  const teamNow = useGame.getState().team;
+  const synergy = squadSynergy(teamNow.filter((id): id is string => !!id).map((id) => FIGHTER[id]));
+  const leaderId = teamNow[0];
+  const leaderNote = leaderId && FIGHTER[leaderId] ? leaderAura(FIGHTER[leaderId].role).note : "";
+  const bannerNotes = [...synergy.notes, leaderNote].filter(Boolean);
   const skill = actor?.skills.skill;
   const ult = actor?.skills.ult;
   const yourTurn = !busy && actor?.side === "ally" && battle.phase === "pick";
@@ -164,7 +198,7 @@ export function BattleView({ setup, onExit }: { setup: BattleSetup; onExit: () =
             <p className="text-sm text-muted">
               Ronda {Math.max(1, battle.round)}
               {setup.modLabel ? ` · ${setup.modLabel}` : ""}
-              {synergy.notes.length ? ` · ${synergy.notes.join(" ")}` : ""}
+              {bannerNotes.length ? ` · ${bannerNotes.join(" ")}` : ""}
             </p>
           </div>
           {battle.phase === "pick" ? (
@@ -174,19 +208,28 @@ export function BattleView({ setup, onExit }: { setup: BattleSetup; onExit: () =
           ) : null}
         </header>
 
-        <UnitRow
-          units={enemies}
-          floats={floats}
-          flash={flash}
-          activeId={actor?.iid}
-          focusId={focusId}
-          onPick={(id) => {
-            setFocus(id);
-            sfx("click");
-          }}
-        />
+        <div className="grid flex-1 grid-cols-2 items-center gap-3 py-2">
+          <section className="flex flex-col items-end gap-2" aria-label="Enemigos">
+            <p className="w-full max-w-40 text-right text-xs uppercase tracking-widest text-muted">Enemigos</p>
+            <SideColumn
+              units={enemies}
+              floats={floats}
+              flash={flash}
+              activeId={actor?.iid}
+              focusId={focusId}
+              onPick={(id) => {
+                setFocus(id);
+                sfx("click");
+              }}
+            />
+          </section>
+          <section className="flex flex-col items-start gap-2" aria-label="Escuadra">
+            <p className="w-full max-w-40 text-xs uppercase tracking-widest text-gold">Escuadra</p>
+            <SideColumn units={allies} floats={floats} flash={flash} activeId={actor?.iid} mirror />
+          </section>
+        </div>
 
-        <p className="py-3 text-center font-display text-2xl uppercase tracking-wide text-gold">
+        <p className="py-2 text-center font-display text-2xl uppercase tracking-wide text-gold">
           {battle.phase === "victory"
             ? "Victoria"
             : battle.phase === "defeat"
@@ -198,9 +241,7 @@ export function BattleView({ setup, onExit }: { setup: BattleSetup; onExit: () =
                 : "…"}
         </p>
 
-        <UnitRow units={allies} floats={floats} flash={flash} activeId={actor?.iid} />
-
-        <div className="mt-3 min-h-16 rounded-xl border border-line bg-surface/80 px-3 py-2" aria-live="polite">
+        <div className="min-h-14 rounded-xl border border-line bg-surface/80 px-3 py-2" aria-live="polite">
           {battle.log.slice(-3).map((line) => (
             <p key={line.id} className="text-sm text-muted">
               {line.text}
@@ -208,65 +249,89 @@ export function BattleView({ setup, onExit }: { setup: BattleSetup; onExit: () =
           ))}
         </div>
 
-        {battle.phase === "pick" ? (
-          <div className="mt-3 grid grid-cols-3 gap-2 pb-2">
-            <Btn tone="ghost" className="px-2 text-lg leading-none" disabled={!yourTurn} onClick={() => playerAct("basic")}>
-              Ataque
-              <span className="mt-1 block font-sans text-xs normal-case tracking-normal text-muted">+22 ki</span>
-            </Btn>
-            <Btn
-              tone="ghost"
-              className="px-2 text-lg leading-none"
-              disabled={!yourTurn || !skill || (actor?.ki ?? 0) < (skill?.cost ?? 99)}
-              onClick={() => playerAct("skill")}
-            >
-              Habilidad
-              <span className="mt-1 block font-sans text-xs normal-case tracking-normal text-muted">{skill ? `${skill.cost} ki` : ""}</span>
-            </Btn>
-            <Btn
-              className="px-2 text-lg leading-none"
-              disabled={!yourTurn || !ult || (actor?.ki ?? 0) < (ult?.cost ?? 99)}
-              onClick={() => playerAct("ult")}
-            >
-              Definitiva
-              <span className="mt-1 block font-sans text-xs normal-case tracking-normal text-ink/80">{ult ? `${ult.cost} ki` : ""}</span>
-            </Btn>
-          </div>
-        ) : null}
-        {yourTurn ? (
-          <p className="pb-4 text-center text-sm text-muted">
-            {actor?.skills.skill.name}: {actor?.skills.skill.blurb}
-            {ult ? ` · ${ult.name}: ${ult.blurb}` : ""}
-          </p>
-        ) : (
-          <div className="pb-4" />
-        )}
+        <div className="mt-3 rounded-card border border-line bg-bg/95 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+          {battle.phase === "pick" ? (
+            <div className="grid grid-cols-3 gap-2">
+              <Btn tone="ghost" className="px-2 text-lg leading-none" disabled={!yourTurn} onClick={() => playerAct("basic")}>
+                Ataque
+                <span className="mt-1 block font-sans text-xs normal-case tracking-normal text-muted">+22 ki</span>
+              </Btn>
+              <Btn
+                tone="ghost"
+                className="px-2 text-lg leading-none"
+                disabled={!yourTurn || !skill || (actor?.ki ?? 0) < (skill?.cost ?? 99)}
+                onClick={() => playerAct("skill")}
+              >
+                Habilidad
+                <span className="mt-1 block font-sans text-xs normal-case tracking-normal text-muted">{skill ? `${skill.cost} ki` : ""}</span>
+              </Btn>
+              <Btn
+                className="px-2 text-lg leading-none"
+                disabled={!yourTurn || !ult || (actor?.ki ?? 0) < (ult?.cost ?? 99)}
+                onClick={() => playerAct("ult")}
+              >
+                Definitiva
+                <span className="mt-1 block font-sans text-xs normal-case tracking-normal text-ink/80">{ult ? `${ult.cost} ki` : ""}</span>
+              </Btn>
+            </div>
+          ) : (
+            <p className="py-3 text-center text-sm text-muted">La botonera espera al siguiente turno.</p>
+          )}
+          {yourTurn ? (
+            <p className="px-1 pt-2 text-center text-sm text-muted">
+              {actor?.skills.skill.name}: {actor?.skills.skill.blurb}
+              {ult ? ` · ${ult.name}: ${ult.blurb}` : ""}
+            </p>
+          ) : null}
+        </div>
       </div>
 
-      {battle.phase !== "pick" ? (
+      {battle.phase === "victory" && loot ? (
+        <div className="fixed inset-0 z-40 grid place-items-center bg-bg/80 px-4">
+          <div className="w-full max-w-md rounded-card border border-gold bg-surface p-5 text-center">
+            <p className="text-xs uppercase tracking-widest text-gold">Victoria</p>
+            <h2 className="font-display text-6xl uppercase leading-none text-gold">¡Pacto sellado!</h2>
+            {loot.first ? (
+              <p className="mx-auto mt-3 inline-block rounded-full border border-gold px-3 py-1 text-xs uppercase tracking-widest text-gold">Primera victoria</p>
+            ) : null}
+            <ul className="mt-4 grid grid-cols-3 gap-2">
+              <li className="rounded-xl border border-line bg-bg px-2 py-3">
+                <p className="font-display text-3xl tabular-nums text-gold">+{loot.crystals}</p>
+                <p className="text-xs uppercase tracking-wide text-muted">Cristales</p>
+              </li>
+              <li className="rounded-xl border border-line bg-bg px-2 py-3">
+                <p className="font-display text-3xl tabular-nums text-gold">+{loot.orbs}</p>
+                <p className="text-xs uppercase tracking-wide text-muted">Orbes</p>
+              </li>
+              <li className="rounded-xl border border-line bg-bg px-2 py-3">
+                <p className="font-display text-3xl tabular-nums text-gold">+{loot.xp}</p>
+                <p className="text-xs uppercase tracking-wide text-muted">Exp</p>
+              </li>
+            </ul>
+            {loot.grant ? <p className="mt-3 text-sm text-muted">Una luchadora se une al pacto, o deja orbes si ya estaba.</p> : null}
+            <div className="mt-5 grid gap-2">
+              <Btn onClick={repeat}>Repetir</Btn>
+              <Btn tone="ghost" disabled={!next} onClick={advance}>
+                Siguiente nivel
+              </Btn>
+              <Btn tone="ghost" onClick={onExit}>
+                Continuar
+              </Btn>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {battle.phase === "defeat" ? (
         <div className="fixed inset-0 z-40 grid place-items-center bg-bg/80 px-4">
           <div className="w-full max-w-md rounded-card border border-line bg-surface p-5">
-            <h2 className="font-display text-5xl uppercase text-gold">{battle.phase === "victory" ? "Victoria" : "El ki se rompe"}</h2>
-            {battle.phase === "victory" ? (
-              <ul className="mt-3 space-y-1 text-sm">
-                <li className="tabular-nums">+{setup.rewards.crystals} cristales</li>
-                <li className="tabular-nums">+{setup.rewards.orbs} orbes de ki</li>
-                {setup.rewards.grant ? <li>Una luchadora se une al pacto, o deja orbes si ya estaba.</li> : null}
-              </ul>
-            ) : (
-              <p className="mt-2 text-sm text-muted">La escuadra sigue en pie fuera del anillo. Puedes reintentar o entrenar en el dojo.</p>
-            )}
+            <h2 className="font-display text-5xl uppercase text-gold">El ki se rompe</h2>
+            <p className="mt-2 text-sm text-muted">La escuadra sigue en pie fuera del anillo. Puedes repetir o volver.</p>
             <div className="mt-5 grid gap-2">
-              {battle.phase === "victory" ? (
-                <Btn onClick={() => finish(false)}>Continuar</Btn>
-              ) : (
-                <>
-                  <Btn onClick={() => finish(true)}>Reintentar</Btn>
-                  <Btn tone="ghost" onClick={() => finish(false)}>
-                    Volver
-                  </Btn>
-                </>
-              )}
+              <Btn onClick={repeat}>Repetir</Btn>
+              <Btn tone="ghost" onClick={onExit}>
+                Continuar
+              </Btn>
             </div>
           </div>
         </div>
@@ -292,12 +357,13 @@ export function BattleView({ setup, onExit }: { setup: BattleSetup; onExit: () =
   );
 }
 
-function UnitRow({
+function SideColumn({
   units,
   floats,
   flash,
   activeId,
   focusId,
+  mirror = false,
   onPick,
 }: {
   units: Unit[];
@@ -305,10 +371,11 @@ function UnitRow({
   flash: Set<string>;
   activeId?: string;
   focusId?: string | null;
+  mirror?: boolean;
   onPick?: (id: string) => void;
 }) {
   return (
-    <div className={units.length <= 1 ? "mx-auto grid max-w-44 grid-cols-1 gap-2" : units.length === 2 ? "grid grid-cols-2 gap-2" : "grid grid-cols-3 gap-2"}>
+    <div className="flex w-full max-w-40 flex-col gap-2">
       {units.map((unit) => (
         <Portrait
           key={unit.iid}
@@ -326,6 +393,7 @@ function UnitRow({
           flashed={flash.has(unit.iid)}
           floats={floats.filter((item) => item.iid === unit.iid)}
           imageFilter={unit.ref === "acechador" ? "hue-rotate-90 saturate-150" : unit.ref === "centinela" ? "brightness-75" : undefined}
+          mirror={mirror}
           onClick={onPick && unit.alive ? () => onPick(unit.iid) : undefined}
         />
       ))}

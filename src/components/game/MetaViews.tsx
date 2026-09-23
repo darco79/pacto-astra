@@ -1,25 +1,22 @@
 import { useEffect, useState } from "react";
 import { ACHIEVEMENTS } from "@/game/achievements";
-import { squadSynergy } from "@/game/synergy";
 import { CHAPTERS, PRACTICE } from "@/game/content";
 import { sfx } from "@/game/audio";
 import { rateRows } from "@/game/gacha";
-import { COST_ONE, COST_TEN, ELEMENT_LABEL, FIGHTERS, LEVEL_CAP, PITY_MAX, ROLE_LABEL, levelCost, statsOf } from "@/game/roster";
+import { leaderAura } from "@/game/synergy";
+import { COST_ONE, COST_TEN, ELEMENT_LABEL, FIGHTERS, LEVEL_CAP, PITY_MAX, RANK, ROLE_LABEL, levelCost, rateSquad, statsOf } from "@/game/roster";
 import { localDay, useGame, type PullCard } from "@/game/store";
 import type { BattleSetup, ChoiceMod, Rarity } from "@/game/types";
 import { Btn, Portrait, Stars, rarityTone, roleLine } from "./ui";
+import { CrystalBreak } from "./CrystalBreak";
 
 export function HubView({ onNavigate }: { onNavigate: (screen: "story" | "summon" | "squad" | "dojo" | "logros" | "orden" | "tienda") => void }) {
   const team = useGame((state) => state.team);
   const owned = useGame((state) => state.owned);
   const cleared = useGame((state) => state.cleared);
+  const xp = useGame((state) => state.xp);
   const next = CHAPTERS.find((chapter) => !cleared.includes(chapter.id)) ?? CHAPTERS[CHAPTERS.length - 1];
-  const synergy = squadSynergy(team.filter((id): id is string => !!id && !!owned[id]).map((id) => FIGHTER(id)));
-  const power = team.reduce((sum, id) => {
-    if (!id || !owned[id]) return sum;
-    const stats = statsOf(FIGHTER(id), owned[id]);
-    return sum + stats.atk + Math.round(stats.hp / 10);
-  }, 0);
+  const rating = rateSquad(team, owned);
 
   return (
     <div className="space-y-5">
@@ -28,8 +25,10 @@ export function HubView({ onNavigate }: { onNavigate: (screen: "story" | "summon
         <h1 className="font-display text-5xl uppercase leading-none">El pacto</h1>
         <p className="mt-1 max-w-prose text-sm text-muted">
           Tres puestos, ki medido y un sindicato que bebe los pozos. Tú eliges el siguiente paso. Poder de escuadra{" "}
-          <span className="tabular-nums text-fg">{power}</span>.
-          {synergy.notes.length ? ` ${synergy.notes.join(" ")}` : ""}
+          <span className="tabular-nums text-fg">{rating.total}</span>. Experiencia{" "}
+          <span className="tabular-nums text-fg">{xp}</span>.
+          {rating.leader ? ` ${rating.leader.note}` : ""}
+          {rating.synergy.notes.length ? ` ${rating.synergy.notes.join(" ")}` : ""}
         </p>
       </section>
       <div className="grid grid-cols-3 gap-2">
@@ -122,6 +121,7 @@ export function StoryView({ onStart }: { onStart: (setup: BattleSetup) => void }
       modLabel: choice?.label ?? "",
       spawns: chapter.spawns,
       rewards: done ? chapter.replay : chapter.rewards,
+      replay: chapter.replay,
     });
   }
 
@@ -225,6 +225,7 @@ export function SummonView() {
   const freeDaily = useGame((state) => state.freeDaily);
   const [results, setResults] = useState<PullCard[] | null>(null);
   const [reel, setReel] = useState<PullCard[] | null>(null);
+  const [crack, setCrack] = useState<PullCard[] | null>(null);
   const [shown, setShown] = useState(0);
   const [banner, setBanner] = useState(false);
   const todayFree = daily === localDay();
@@ -246,15 +247,21 @@ export function SummonView() {
       sfx("deny");
       return;
     }
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduce) {
+    setResults(null);
+    setShown(0);
+    setReel(null);
+    setCrack(cards);
+  }
+
+  function finishCrack() {
+    const cards = crack;
+    if (!cards) return;
+    setCrack(null);
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       setResults(cards);
       setShown(0);
       return;
     }
-    sfx("ult");
-    setResults(null);
-    setShown(0);
     setReel(cards);
   }
 
@@ -345,12 +352,31 @@ export function SummonView() {
           <Btn tone="ghost" disabled={todayFree} onClick={() => reveal(freeDaily())}>
             {todayFree ? "Llamado de hoy usado" : "Llamado diario gratis"}
           </Btn>
-          <p className="text-sm text-muted">Cada ×10 garantiza al menos una carta SR o superior. Tienes <span className="tabular-nums text-fg">{crystals}</span> cristales. El destello se puede saltar.</p>
+          <p className="text-sm text-muted">
+            Cada ×10 garantiza al menos una carta SR o superior. Si repites a alguien, gana una estrella (hasta 5) y orbes de ki. A 5 estrellas solo caen orbes. Tienes{" "}
+            <span className="tabular-nums text-fg">{crystals}</span> cristales. El destello se puede saltar.
+          </p>
         </div>
       )}
+      {crack ? (
+        <CrystalBreak
+          rarity={peakRarity(crack)}
+          title={crack.length > 1 ? `Cristal ×${crack.length}` : "Cristal de pacto"}
+          hint={
+            crack.length > 1
+              ? `La rareza más alta de esta invocación es ${peakRarity(crack)}. El cristal rompe con ese brillo.`
+              : `Este cristal es ${peakRarity(crack)}. El brillo y el golpe marcan la rareza.`
+          }
+          onDone={finishCrack}
+        />
+      ) : null}
       {reel ? <SummonReel onDone={finishReel} /> : null}
     </div>
   );
+}
+
+function peakRarity(cards: PullCard[]) {
+  return cards.reduce<Rarity>((best, card) => (RANK[card.rarity] > RANK[best] ? card.rarity : best), "R");
 }
 
 function SummonReel({ onDone }: { onDone: () => void }) {
@@ -366,61 +392,299 @@ function SummonReel({ onDone }: { onDone: () => void }) {
   );
 }
 
+function slotPower(id: string, owned: Record<string, { level: number; stars: number }>) {
+  const progress = owned[id];
+  if (!progress) return 0;
+  const stats = statsOf(FIGHTER(id), progress);
+  return stats.atk + Math.round(stats.hp / 10);
+}
+
+function FighterSheet({ id, slot, onClose }: { id: string; slot: number; onClose: () => void }) {
+  const owned = useGame((state) => state.owned);
+  const orbs = useGame((state) => state.orbs);
+  const team = useGame((state) => state.team);
+  const levelUp = useGame((state) => state.levelUp);
+  const setSlot = useGame((state) => state.setSlot);
+  const fighter = FIGHTER(id);
+  const progress = owned[id];
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  if (!progress) return null;
+  const stats = statsOf(fighter, progress);
+  const cost = levelCost(progress.level);
+  const here = team.findIndex((seat) => seat === id);
+  const capped = progress.level >= LEVEL_CAP;
+  const aura = leaderAura(fighter.role).note;
+
+  function place(index: number) {
+    sfx("click");
+    if (team[index] === id) setSlot(index, null);
+    else setSlot(index, id);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid items-end bg-bg/75 sm:place-items-center" role="presentation" onClick={onClose}>
+      <article
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ficha-title"
+        className="max-h-[88dvh] w-full space-y-3 overflow-y-auto rounded-t-card border border-line bg-surface p-4 sm:max-w-md sm:rounded-card"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-widest text-gold">Ficha rápida</p>
+            <h2 id="ficha-title" className="font-display text-4xl uppercase leading-none">
+              {fighter.name}
+            </h2>
+            <p className="text-sm text-gold">{fighter.title}</p>
+            <p className="text-xs text-muted">{roleLine(fighter.role, fighter.element)}</p>
+          </div>
+          <button type="button" className="min-h-11 px-2 text-sm text-gold" onClick={onClose}>
+            Cerrar
+          </button>
+        </div>
+        <div className="grid grid-cols-[6.5rem_1fr] gap-3">
+          <Portrait portrait={fighter.id} name={fighter.name} rarity={fighter.rarity} element={fighter.element} stars={progress.stars} />
+          <div className="space-y-1 text-sm">
+            <p>
+              Nv. {progress.level} <Stars count={progress.stars} />
+            </p>
+            <p className="tabular-nums text-muted">
+              Vida {stats.hp} · Ataque {stats.atk}
+              <br />
+              Defensa {stats.def} · Velocidad {stats.spd}
+            </p>
+            <p className="text-muted">Poder de carta {slotPower(id, owned)}.</p>
+            <p className="text-gold">Pasiva si es líder: {aura}</p>
+          </div>
+        </div>
+        <ul className="space-y-2">
+          {([fighter.skills.basic, fighter.skills.skill, fighter.skills.ult] as const).map((skill) => (
+            <li key={skill.kind} className="rounded-xl border border-line px-3 py-2">
+              <p className="font-display text-2xl uppercase leading-none">
+                {skill.name}
+                <span className="ml-2 text-sm text-muted">
+                  {skill.kind === "basic" ? "Ataque" : skill.kind === "skill" ? `Habilidad · ${skill.cost} ki` : "Definitiva · 100 ki"}
+                </span>
+              </p>
+              <p className="text-sm text-muted">{skill.blurb}</p>
+            </li>
+          ))}
+        </ul>
+        <Btn
+          disabled={capped || orbs < cost}
+          onClick={() => {
+            if (levelUp(fighter.id)) sfx("heal");
+            else sfx("deny");
+          }}
+        >
+          {capped ? "Nivel máximo" : `Subir nivel · ${cost} orbes`}
+        </Btn>
+        <p className="text-xs text-muted">Tienes {orbs} orbes. El puesto marcado ahora es el {slot + 1}{slot === 0 ? ", el de líder" : ""}.</p>
+        <div className="grid gap-2">
+          <Btn onClick={() => place(slot)}>
+            {here === slot ? `Quitar del puesto ${slot + 1}` : here >= 0 ? `Mover al puesto ${slot + 1}` : `Poner en el puesto ${slot + 1}`}
+            {slot === 0 && here !== slot ? " · líder" : ""}
+          </Btn>
+          <div className="grid grid-cols-3 gap-2">
+            {[0, 1, 2].map((index) => (
+              <Btn key={index} tone={team[index] === id ? "gold" : "ghost"} className="px-2 text-xl" onClick={() => place(index)}>
+                {index === 0 ? "Líder" : `Puesto ${index + 1}`}
+              </Btn>
+            ))}
+          </div>
+        </div>
+      </article>
+    </div>
+  );
+}
+
 export function SquadView() {
   const team = useGame((state) => state.team);
   const owned = useGame((state) => state.owned);
-  const setSlot = useGame((state) => state.setSlot);
   const [slot, setActive] = useState(0);
-  const ids = Object.keys(owned);
+  const [sheet, setSheet] = useState<string | null>(null);
+  const [reserveOpen, setReserveOpen] = useState(false);
+  const rating = rateSquad(team, owned);
+  const bench = Object.keys(owned)
+    .filter((id) => !team.includes(id))
+    .sort((a, b) => RANK[FIGHTER(b).rarity] - RANK[FIGHTER(a).rarity] || FIGHTER(a).name.localeCompare(FIGHTER(b).name, "es"));
+
+  function openSheet(id: string, index?: number) {
+    if (typeof index === "number") setActive(index);
+    setSheet(id);
+    sfx("click");
+  }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pb-16">
       <div>
         <p className="text-xs uppercase tracking-widest text-gold">Escuadra</p>
         <h1 className="font-display text-5xl uppercase leading-none">Tres puestos</h1>
-        <p className="mt-1 text-sm text-muted">Elige el puesto y luego una luchadora. La velocidad, no el orden, decide quién actúa antes.</p>
-        {squadSynergy(team.filter((id): id is string => !!id).map((id) => FIGHTER(id))).notes.map((note) => (
+        <p className="mt-1 text-sm text-muted">
+          Toca una carta para abrir su ficha: nivel, habilidades y puesto. El puesto 1 es la líder y presta su pasiva a toda la escuadra.
+        </p>
+      </div>
+      <section className="rounded-card border border-line bg-surface px-3 py-3">
+        <p className="text-xs uppercase tracking-widest text-gold">Poder total</p>
+        <p className="font-display text-5xl tabular-nums leading-none">{rating.total}</p>
+        <p className="mt-1 text-xs text-muted">Base {rating.base}. Cambia al momento si mueves un puesto, subes de nivel o cambias de líder.</p>
+        <p className={`mt-2 text-sm ${rating.leader ? "text-gold" : "text-muted"}`}>
+          {rating.leader ? rating.leader.note : "El puesto 1 está vacío. Quien lo ocupe otorga su habilidad de líder."}
+        </p>
+        {rating.synergy.notes.map((note) => (
           <p key={note} className="mt-1 text-sm text-gold">
             {note}
           </p>
         ))}
-      </div>
+      </section>
       <div className="grid grid-cols-3 gap-2">
-        {team.map((id, index) => (
-          <button
-            key={index}
-            type="button"
-            onClick={() => setActive(index)}
-            className={`rounded-card border p-2 text-left ${slot === index ? "border-gold" : "border-line"}`}
-          >
-            <span className="text-xs text-muted">Puesto {index + 1}</span>
-            <span className="block truncate font-display text-2xl uppercase leading-none">{id ? FIGHTER(id).name : "Vacío"}</span>
-          </button>
-        ))}
-      </div>
-      <div className="grid grid-cols-3 gap-2">
-        {ids.map((id) => {
-          const fighter = FIGHTER(id);
-          const progress = owned[id];
-          return (
-            <Portrait
-              key={id}
-              portrait={id}
-              name={fighter.name}
-              rarity={fighter.rarity}
-              element={fighter.element}
-              subtitle={ROLE_LABEL[fighter.role]}
-              level={progress.level}
-              stars={progress.stars}
-              selected={team[slot] === id}
+        {team.map((id, index) =>
+          id && owned[id] ? (
+            <div key={id} className={`rounded-card ${slot === index ? "ring-2 ring-gold" : ""}`}>
+              <button type="button" className="mb-1 w-full text-left" onClick={() => setActive(index)}>
+                <span className="text-xs uppercase tracking-widest text-gold">{index === 0 ? "Puesto 1 · Líder" : `Puesto ${index + 1}`}</span>
+                <span className="block text-xs tabular-nums text-muted">Poder {slotPower(id, owned)}</span>
+              </button>
+              <Portrait
+                portrait={id}
+                name={FIGHTER(id).name}
+                rarity={FIGHTER(id).rarity}
+                element={FIGHTER(id).element}
+                subtitle={ROLE_LABEL[FIGHTER(id).role]}
+                level={owned[id].level}
+                stars={owned[id].stars}
+                ratio="square"
+                selected={slot === index}
+                onClick={() => openSheet(id, index)}
+              />
+            </div>
+          ) : (
+            <button
+              key={`empty-${index}`}
+              type="button"
               onClick={() => {
+                setActive(index);
+                setReserveOpen(true);
                 sfx("click");
-                setSlot(slot, team[slot] === id ? null : id);
               }}
-            />
-          );
-        })}
+              className={`grid aspect-square place-items-center rounded-card border border-dashed px-2 text-center text-sm ${slot === index ? "border-gold text-gold" : "border-line text-muted"}`}
+            >
+              {index === 0 ? "Líder vacío" : `Puesto ${index + 1} vacío`}
+              <span className="mt-1 block text-xs">Abre la reserva</span>
+            </button>
+          ),
+        )}
       </div>
+      <section className="fixed inset-x-0 bottom-16 z-20 mx-auto max-w-3xl border-t border-line bg-bg/95">
+        <button
+          type="button"
+          className="flex min-h-12 w-full items-center justify-between px-4 text-left"
+          aria-expanded={reserveOpen}
+          onClick={() => {
+            setReserveOpen((open) => !open);
+            sfx("click");
+          }}
+        >
+          <span>
+            <span className="text-xs uppercase tracking-widest text-gold">Reserva</span>
+            <span className="ml-2 text-sm text-muted">{bench.length} fuera de los tres puestos</span>
+          </span>
+          <span className="text-sm text-gold">{reserveOpen ? "Ocultar" : "Desplegar"}</span>
+        </button>
+        {reserveOpen ? (
+          <div className="max-h-64 overflow-y-auto px-4 pb-3">
+            {bench.length === 0 ? (
+              <p className="pb-2 text-sm text-muted">No hay suplentes. Invoca o saca a una titular desde su ficha.</p>
+            ) : (
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                {bench.map((id) => (
+                  <Portrait
+                    key={id}
+                    portrait={id}
+                    name={FIGHTER(id).name}
+                    rarity={FIGHTER(id).rarity}
+                    element={FIGHTER(id).element}
+                    subtitle={ROLE_LABEL[FIGHTER(id).role]}
+                    level={owned[id].level}
+                    stars={owned[id].stars}
+                    ratio="square"
+                    onClick={() => openSheet(id)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null}
+      </section>
+      {sheet && owned[sheet] ? <FighterSheet id={sheet} slot={slot} onClose={() => setSheet(null)} /> : null}
+    </div>
+  );
+}
+
+function kiMark(kind: "basic" | "skill" | "ult", cost: number, kiGain: number) {
+  if (kind === "basic") return kiGain > 0 ? `Ataque · +${kiGain} ki` : "Ataque · 0 ki";
+  if (kind === "skill") return `Habilidad · ${cost} ki`;
+  return `Definitiva · ${cost} ki`;
+}
+
+function CodexDossier({
+  fighter,
+  progress,
+}: {
+  fighter: (typeof FIGHTERS)[number];
+  progress?: { level: number; stars: number };
+}) {
+  const grown = progress ? statsOf(fighter, progress) : null;
+  const stats = grown ?? { hp: fighter.hp, atk: fighter.atk, def: fighter.def, spd: fighter.spd };
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-[6.5rem_1fr] gap-3">
+        <Portrait portrait={fighter.id} name={fighter.name} rarity={fighter.rarity} element={fighter.element} stars={progress?.stars} />
+        <div>
+          <p className="font-display text-3xl uppercase leading-none">{fighter.name}</p>
+          <p className="text-sm text-gold">{fighter.title}</p>
+          <p className="text-xs text-muted">{roleLine(fighter.role, fighter.element)}</p>
+          {progress ? (
+            <p className="mt-1 text-sm">
+              Nv. {progress.level} <Stars count={progress.stars} />
+            </p>
+          ) : (
+            <p className="mt-1 text-xs uppercase tracking-widest text-muted">Sin pacto</p>
+          )}
+          <p className="mt-2 text-sm tabular-nums text-muted">
+            Vida {stats.hp} · Ataque {stats.atk}
+            <br />
+            Defensa {stats.def} · Velocidad {stats.spd}
+            <br />
+            Crítico {Math.round(fighter.crit * 100)}%
+          </p>
+          <p className="mt-1 text-xs text-muted">
+            {progress ? "Stats con su nivel y estrellas." : "Stats de cristal, antes de nivel y estrellas."}
+          </p>
+        </div>
+      </div>
+      <p className="text-sm">{progress ? fighter.lore : "Aún no responde al cristal. Su historia se abre al unirse al pacto."}</p>
+      <ul className="space-y-2">
+        {([fighter.skills.basic, fighter.skills.skill, fighter.skills.ult] as const).map((skill) => (
+          <li key={skill.kind} className="rounded-xl border border-line px-3 py-2">
+            <div className="flex items-start justify-between gap-3">
+              <p className="font-display text-2xl uppercase leading-none">{skill.name}</p>
+              <p className="shrink-0 text-right text-xs uppercase tracking-widest text-gold">{kiMark(skill.kind, skill.cost, skill.kiGain)}</p>
+            </div>
+            <p className="mt-1 text-sm text-muted">{skill.blurb}</p>
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs text-muted">{ELEMENT_LABEL[fighter.element]} tiene ventaja contra el elemento que marca el ciclo del anillo.</p>
     </div>
   );
 }
@@ -429,9 +693,26 @@ export function CodexView() {
   const owned = useGame((state) => state.owned);
   const [filter, setFilter] = useState<"todas" | Rarity>("todas");
   const [selected, setSelected] = useState(FIGHTERS[0]?.id ?? "lira");
+  const [sheet, setSheet] = useState(false);
   const list = FIGHTERS.filter((fighter) => filter === "todas" || fighter.rarity === filter);
-  const fighter = FIGHTERS.find((item) => item.id === selected) ?? list[0] ?? null;
-  const progress = fighter ? owned[fighter.id] : undefined;
+  const picked = FIGHTERS.find((item) => item.id === selected) ?? null;
+  const shown = (picked && list.some((item) => item.id === picked.id) ? picked : list[0]) ?? null;
+  const modalFighter = sheet && picked && list.some((item) => item.id === picked.id) ? picked : null;
+
+  useEffect(() => {
+    if (!modalFighter) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setSheet(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [modalFighter]);
+
+  function choose(id: string) {
+    setSelected(id);
+    setSheet(true);
+    sfx("click");
+  }
 
   return (
     <div className="space-y-4">
@@ -439,7 +720,7 @@ export function CodexView() {
         <p className="text-xs uppercase tracking-widest text-gold">Códice</p>
         <h1 className="font-display text-5xl uppercase leading-none">Elenco</h1>
         <p className="mt-1 text-sm text-muted">
-          {Object.keys(owned).length} de {FIGHTERS.length} en el pacto.
+          {Object.keys(owned).length} de {FIGHTERS.length} en el pacto. Toca una carta: la ficha se abre al lado, o encima si la pantalla es estrecha.
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -454,46 +735,46 @@ export function CodexView() {
           </button>
         ))}
       </div>
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-        {list.map((item) => (
-          <Portrait
-            key={item.id}
-            portrait={item.id}
-            name={item.name}
-            rarity={item.rarity}
-            element={item.element}
-            subtitle={owned[item.id] ? ROLE_LABEL[item.role] : "Sin pacto"}
-            selected={fighter?.id === item.id}
-            dim={!owned[item.id]}
-            onClick={() => setSelected(item.id)}
-          />
-        ))}
+      <div className="md:grid md:grid-cols-[minmax(0,1fr)_20rem] md:items-start md:gap-4">
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-3">
+          {list.map((item) => (
+            <Portrait
+              key={item.id}
+              portrait={item.id}
+              name={item.name}
+              rarity={item.rarity}
+              element={item.element}
+              subtitle={owned[item.id] ? ROLE_LABEL[item.role] : "Sin pacto"}
+              selected={shown?.id === item.id}
+              dim={!owned[item.id]}
+              onClick={() => choose(item.id)}
+            />
+          ))}
+        </div>
+        <aside className="sticky top-2 hidden max-h-[calc(100dvh-8.5rem)] overflow-y-auto rounded-card border border-line bg-surface p-3 md:block">
+          {shown ? <CodexDossier fighter={shown} progress={owned[shown.id]} /> : <p className="text-sm text-muted">No hay cartas en este filtro.</p>}
+        </aside>
       </div>
-      {fighter ? (
-        <article className="space-y-3 rounded-card border border-line bg-surface p-3">
-          <div className="grid grid-cols-[7rem_1fr] gap-3">
-            <Portrait portrait={fighter.id} name={fighter.name} rarity={fighter.rarity} element={fighter.element} stars={progress?.stars} />
-            <div>
-              <p className="font-display text-3xl uppercase leading-none">{fighter.name}</p>
-              <p className="text-sm text-gold">{fighter.title}</p>
-              <p className="text-xs text-muted">{roleLine(fighter.role, fighter.element)}</p>
-              {progress ? <Stars count={progress.stars} /> : null}
-              <p className="mt-2 text-sm">{progress ? fighter.lore : "Aún no responde al cristal. Su historia se abre al unirse al pacto."}</p>
+      {modalFighter ? (
+        <div className="fixed inset-0 z-50 grid place-items-end bg-bg/75 p-3 sm:place-items-center md:hidden" role="presentation" onClick={() => setSheet(false)}>
+          <article
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="codex-title"
+            className="max-h-[min(88dvh,42rem)] w-full max-w-lg overflow-y-auto rounded-card border border-line bg-surface p-4"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p id="codex-title" className="text-xs uppercase tracking-widest text-gold">
+                Ficha del códice
+              </p>
+              <button type="button" className="min-h-11 px-2 text-sm text-gold" onClick={() => setSheet(false)}>
+                Cerrar
+              </button>
             </div>
-          </div>
-          <ul className="space-y-2">
-            {([fighter.skills.basic, fighter.skills.skill, fighter.skills.ult] as const).map((skill) => (
-              <li key={skill.kind} className="rounded-xl border border-line px-3 py-2">
-                <p className="font-display text-2xl uppercase leading-none">
-                  {skill.name}
-                  <span className="ml-2 text-sm text-muted">{skill.kind === "basic" ? "Ataque" : skill.kind === "skill" ? `Habilidad · ${skill.cost} ki` : "Definitiva · 100 ki"}</span>
-                </p>
-                <p className="text-sm text-muted">{skill.blurb}</p>
-              </li>
-            ))}
-          </ul>
-          <p className="text-xs text-muted">{ELEMENT_LABEL[fighter.element]} tiene ventaja contra el elemento que marca el ciclo del anillo.</p>
-        </article>
+            <CodexDossier fighter={modalFighter} progress={owned[modalFighter.id]} />
+          </article>
+        </div>
       ) : null}
     </div>
   );

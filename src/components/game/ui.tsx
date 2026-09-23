@@ -95,6 +95,7 @@ export function Portrait({
   floats,
   imageFilter,
   ratio = "tall",
+  mirror = false,
   onClick,
 }: {
   portrait: string;
@@ -117,6 +118,7 @@ export function Portrait({
   floats?: Floater[];
   imageFilter?: string;
   ratio?: "tall" | "square";
+  mirror?: boolean;
   onClick?: () => void;
 }) {
   const [failed, setFailed] = useState(false);
@@ -141,7 +143,7 @@ export function Portrait({
           <img
             src={`/cards/${portrait}.jpg`}
             alt=""
-            className={cn("h-full w-full object-cover object-top", imageFilter)}
+            className={cn("h-full w-full object-cover object-top", mirror && "-scale-x-100", imageFilter)}
             onError={() => setFailed(true)}
           />
         ) : (

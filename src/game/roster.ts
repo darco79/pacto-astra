@@ -1,5 +1,6 @@
 import type { Element, Fighter, Rarity, Role, SkillDef } from "./types";
 import { MORE_FIGHTERS } from "./more-fighters";
+import { leaderAura, squadSynergy, type LeaderAura, type Synergy } from "./synergy";
 
 export const ROLE_LABEL: Record<Role, string> = {
   soporte: "Soporte",
@@ -378,5 +379,39 @@ export const FIGHTERS: Fighter[] = [
 ];
 
 export const FIGHTER: Record<string, Fighter> = Object.fromEntries(FIGHTERS.map((f) => [f.id, f]));
+
+export function squadPower(team: readonly (string | null)[], owned: Record<string, { level: number; stars: number }>) {
+  return team.reduce((sum, id) => {
+    if (!id || !owned[id]) return sum;
+    const fighter = FIGHTER[id];
+    if (!fighter) return sum;
+    const stats = statsOf(fighter, owned[id]);
+    return sum + stats.atk + Math.round(stats.hp / 10);
+  }, 0);
+}
+
+export type SquadRating = {
+  total: number;
+  base: number;
+  synergy: Synergy;
+  leader: LeaderAura | null;
+};
+
+/** Poder visible: stats de los tres puestos, más la sinergia y la pasiva del líder. */
+export function rateSquad(
+  team: readonly (string | null)[],
+  owned: Record<string, { level: number; stars: number }>,
+): SquadRating {
+  const filled = team.filter((id): id is string => !!id && !!owned[id] && !!FIGHTER[id]);
+  const base = squadPower(team, owned);
+  const synergy = squadSynergy(filled.map((id) => FIGHTER[id]));
+  const leadId = team[0];
+  const leader = leadId && owned[leadId] && FIGHTER[leadId] ? leaderAura(FIGHTER[leadId].role) : null;
+  const atkMul = (1 + synergy.atk) * (1 + (leader?.atk ?? 0));
+  const ki = synergy.ki + (leader?.ki ?? 0);
+  const shield = synergy.shield + (leader?.shield ?? 0);
+  const total = base === 0 ? 0 : Math.round(base * atkMul + ki * 3 + shield * 120);
+  return { total, base, synergy, leader };
+}
 
 export const DUP_ORBS: Record<Rarity, number> = { R: 22, SR: 48, SSR: 110, UR: 240 };

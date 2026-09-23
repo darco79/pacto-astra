@@ -133,4 +133,5 @@ export type BattleSetup = {
   modLabel: string;
   spawns: Spawn[];
   rewards: { crystals: number; orbs: number; grant?: string };
+  replay?: { crystals: number; orbs: number };
 };

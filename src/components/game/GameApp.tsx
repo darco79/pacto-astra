@@ -1,6 +1,7 @@
 import { Dumbbell, Gem, Library, ScrollText, Settings, Sparkles, Users, Volume2, VolumeX } from "lucide-react";
 import { useEffect, useState } from "react";
 import { playMusic, setMusicEnabled, setSfxEnabled, sfx, unlockAudio } from "@/game/audio";
+import { listSlots, loadSlot, saveSlot, type SlotFile } from "@/game/saves";
 import { useGame } from "@/game/store";
 import type { BattleSetup } from "@/game/types";
 import { cn } from "@/lib/cn";
@@ -41,6 +42,7 @@ function Boot() {
 
 function Play() {
   const introSeen = useGame((state) => state.introSeen);
+  const rite = useGame((state) => state.rite);
   const seeIntro = useGame((state) => state.seeIntro);
   const sfxOn = useGame((state) => state.sfx);
   const [screen, setScreen] = useState<Screen>("hub");
@@ -81,12 +83,13 @@ function Play() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  if (!introSeen) {
+  if (!introSeen || rite < 3) {
     return (
       <main className="relative min-h-dvh">
         <Backdrop />
         <div className="relative mx-auto flex min-h-dvh max-w-xl flex-col justify-end gap-4 px-5 py-8">
           <CaptainIntro
+            startAt={introSeen ? "rite" : "post"}
             onChoose={(next) => {
               unlockAudio();
               seeIntro();
@@ -104,7 +107,7 @@ function Play() {
       <main className="relative min-h-dvh">
         <Backdrop />
         <div className="relative">
-          <BattleView setup={setup} onExit={() => setSetup(null)} />
+          <BattleView key={`${setup.chapterId ?? "libre"}-${setup.title}`} setup={setup} onExit={() => setSetup(null)} onAdvance={setSetup} />
         </div>
         <AwardToast lines={toast} />
       </main>
@@ -219,10 +222,18 @@ function SettingsSheet({ onClose }: { onClose: () => void }) {
   const setSpeed = useGame((state) => state.setSpeed);
   const reset = useGame((state) => state.reset);
   const [confirm, setConfirm] = useState(false);
+  const [slots, setSlots] = useState<(SlotFile | null)[]>(() => listSlots());
+  const [note, setNote] = useState("");
+
+  function refresh(message: string) {
+    setSlots(listSlots());
+    setNote(message);
+    sfx("click");
+  }
 
   return (
     <div className="fixed inset-0 z-40 grid items-end bg-bg/70 sm:place-items-center">
-      <div className="w-full space-y-3 rounded-t-card border border-line bg-surface p-5 sm:max-w-md sm:rounded-card">
+      <div className="max-h-[85dvh] w-full space-y-3 overflow-y-auto rounded-t-card border border-line bg-surface p-5 sm:max-w-md sm:rounded-card">
         <div className="flex items-center justify-between">
           <h2 className="font-display text-4xl uppercase">Ajustes</h2>
           <button type="button" className="min-h-11 px-2 text-sm text-gold" onClick={onClose}>
@@ -244,6 +255,45 @@ function SettingsSheet({ onClose }: { onClose: () => void }) {
           <Btn tone={speed === 2 ? "gold" : "ghost"} onClick={() => setSpeed(2)}>
             Combate 2×
           </Btn>
+        </div>
+        <div className="space-y-2">
+          <p className="font-display text-3xl uppercase leading-none">Partida</p>
+          <p className="text-sm text-muted">El juego se guarda solo. Estas tres ranuras son copias que puedes cargar cuando quieras.</p>
+          {note ? <p className="text-sm text-gold">{note}</p> : null}
+          {slots.map((slot, index) => (
+            <div key={index} className="rounded-xl border border-line px-3 py-2">
+              <p className="font-display text-2xl uppercase leading-none">Ranura {index + 1}</p>
+              <p className="text-xs text-muted">
+                {slot
+                  ? `${new Date(slot.savedAt).toLocaleString()} · ${slot.data.wins} victorias · ${slot.data.crystals} cristales`
+                  : "Vacía"}
+              </p>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <Btn
+                  tone="ghost"
+                  className="text-xl"
+                  onClick={() => refresh(saveSlot(index) ? `Partida guardada en la ranura ${index + 1}.` : "No se pudo guardar.")}
+                >
+                  Guardar
+                </Btn>
+                <Btn
+                  tone="ghost"
+                  className="text-xl"
+                  disabled={!slot}
+                  onClick={() => {
+                    if (!loadSlot(index)) {
+                      refresh("Esa ranura no se puede cargar.");
+                      return;
+                    }
+                    refresh(`Partida cargada desde la ranura ${index + 1}.`);
+                    onClose();
+                  }}
+                >
+                  Cargar
+                </Btn>
+              </div>
+            </div>
+          ))}
         </div>
         {confirm ? (
           <Btn

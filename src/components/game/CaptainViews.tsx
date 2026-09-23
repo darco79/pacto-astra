@@ -1,27 +1,55 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { WELL } from "@/game/content";
 import { FEATURED_ID, MISSIONS, SHOP_PRICE, todayDuty } from "@/game/duty";
 import { sfx } from "@/game/audio";
-import { FIGHTERS } from "@/game/roster";
-import { localDay, useGame } from "@/game/store";
-import type { BattleSetup } from "@/game/types";
+import { FIGHTER, FIGHTERS } from "@/game/roster";
+import { RITE_IDS, localDay, useGame, type PullCard } from "@/game/store";
+import type { BattleSetup, Rarity } from "@/game/types";
+import { CrystalBreak } from "./CrystalBreak";
 import { Btn, Portrait } from "./ui";
 
-export function CaptainIntro({ onChoose }: { onChoose: (screen: "story" | "summon" | "squad" | "dojo") => void }) {
-  const [step, setStep] = useState<"post" | "oath" | "order">("post");
+const RITE_PLAN: { title: string; rarity: Rarity; body: string; hint: string }[] = [
+  {
+    title: "Primer cristal",
+    rarity: "R",
+    body: "Lira Voss está dentro. Esta invocación no es un azar: el pacto te la debe.",
+    hint: "Rareza R. El cristal se parte en polvo claro.",
+  },
+  {
+    title: "Segundo cristal",
+    rarity: "SR",
+    body: "Mira Sol enciende el dojo. También está garantizada.",
+    hint: "Rareza SR. Más brillo y más fragmentos.",
+  },
+  {
+    title: "Tercer cristal",
+    rarity: "SSR",
+    body: "Sable Orrin dejó el anillo para responder aquí. Es SSR, y tampoco sale al azar.",
+    hint: "Rareza SSR. El golpe es oro y brasa.",
+  },
+];
+
+export function CaptainIntro({
+  onChoose,
+  startAt = "post",
+}: {
+  onChoose: (screen: "story" | "summon" | "squad" | "dojo") => void;
+  startAt?: "post" | "rite";
+}) {
+  const [step, setStep] = useState<"post" | "oath" | "rite" | "lesson" | "order">(startAt);
 
   if (step === "post") {
     return (
       <div className="space-y-4">
         <p className="font-display text-6xl uppercase leading-none text-gold">Capitán</p>
         <p className="text-sm">
-          Eres el capitán de dos luchadoras de ki. Lira Voss guarda el puerto. Mira Sol enciende el dojo. El Sindicato Nulo está bebiendo los pozos. Si se apagan, los Anillos se quedan sin vuelo.
+          Aún no tienes escuadra. Tu primera misión es romper tres cristales y sellar el pacto con Lira Voss, Mira Sol y Sable Orrin. Después tú eliges cómo recuperar los pozos y frenar al Sindicato Nulo.
         </p>
-        <div className="grid grid-cols-2 gap-2">
-          <Portrait portrait="lira" name="Lira Voss" rarity="R" element="acero" subtitle="Inventora" ratio="square" />
-          <Portrait portrait="mira" name="Mira Sol" rarity="SR" element="fuego" subtitle="Princesa del dojo" ratio="square" />
+        <div className="grid grid-cols-3 gap-2">
+          <Portrait portrait="lira" name="Lira Voss" rarity="R" element="acero" subtitle="Garantizada" ratio="square" />
+          <Portrait portrait="mira" name="Mira Sol" rarity="SR" element="fuego" subtitle="Garantizada" ratio="square" />
+          <Portrait portrait="sable" name="Sable Orrin" rarity="SSR" element="gravedad" subtitle="Garantizada" ratio="square" />
         </div>
-        <p className="text-sm text-muted">Tu primera misión no es el asalto. Es sellar el pacto. Después eliges cómo recuperar los pozos.</p>
         <Btn
           onClick={() => {
             sfx("click");
@@ -39,24 +67,32 @@ export function CaptainIntro({ onChoose }: { onChoose: (screen: "story" | "summo
       <div className="space-y-4">
         <p className="text-xs uppercase tracking-widest text-gold">Misión 1</p>
         <p className="font-display text-6xl uppercase leading-none text-gold">El pacto</p>
-        <p className="text-sm">El cristal responde solo si el capitán lo acepta. Ellas pegan. Tú marcas el siguiente paso contra el Sindicato Nulo.</p>
+        <p className="text-sm">El cristal responde solo si el capitán lo rompe. Ellas pegan. Tú marcas el siguiente paso. Las tres primeras no dependen de la suerte.</p>
         <Btn
           onClick={() => {
-            sfx("rare");
-            setStep("order");
+            sfx("click");
+            setStep("rite");
           }}
         >
-          Sellar el pacto
+          Abrir el primer cristal
         </Btn>
       </div>
     );
+  }
+
+  if (step === "rite") {
+    return <RiteStep onDone={() => setStep("lesson")} />;
+  }
+
+  if (step === "lesson") {
+    return <DuplicateLesson onDone={() => setStep("order")} />;
   }
 
   return (
     <div className="space-y-4">
       <p className="text-xs uppercase tracking-widest text-gold">Pacto sellado</p>
       <p className="font-display text-5xl uppercase leading-none">Elige el paso</p>
-      <p className="text-sm text-muted">Los pozos siguen abiertos. El Sindicato no se ha ido. Tú decides por dónde empezar.</p>
+      <p className="text-sm text-muted">Lira, Mira y Sable ya están en la escuadra. Los pozos siguen abiertos. Tú decides por dónde empezar.</p>
       <div className="grid gap-2">
         <Btn onClick={() => onChoose("story")}>Recuperar el pozo del puerto</Btn>
         <Btn tone="ghost" onClick={() => onChoose("summon")}>
@@ -69,6 +105,105 @@ export function CaptainIntro({ onChoose }: { onChoose: (screen: "story" | "summo
           Entrar al dojo
         </Btn>
       </div>
+    </div>
+  );
+}
+
+function RiteStep({ onDone }: { onDone: () => void }) {
+  const rite = useGame((state) => state.rite);
+  const breakRite = useGame((state) => state.breakRite);
+  const [card, setCard] = useState<PullCard | null>(null);
+  const [open, setOpen] = useState(false);
+  const owned = useGame((state) => state.owned);
+  const plan = RITE_PLAN[Math.min(rite, RITE_IDS.length - 1)] ?? RITE_PLAN[0];
+  const advanced = useRef(false);
+
+  useEffect(() => {
+    if (advanced.current || card || open || rite < RITE_IDS.length) return;
+    advanced.current = true;
+    onDone();
+  }, [rite, card, open, onDone]);
+
+  if (rite >= RITE_IDS.length && !card && !open) return null;
+
+  if (open && !card && plan) {
+    return (
+      <CrystalBreak
+        rarity={plan.rarity}
+        title={plan.title}
+        hint={plan.hint}
+        onDone={() => {
+          setCard(breakRite());
+          setOpen(false);
+        }}
+      />
+    );
+  }
+
+  if (card) {
+    const fighter = FIGHTER[card.id];
+    const dup = !card.isNew;
+    return (
+      <div className="space-y-4">
+        <p className="text-xs uppercase tracking-widest text-gold">Guía · cristal {Math.min(rite, 3)} de 3</p>
+        <Portrait portrait={card.id} name={fighter.name} rarity={fighter.rarity} element={fighter.element} stars={owned[card.id]?.stars} />
+        <p className="text-sm">
+          {dup
+            ? card.starUp
+              ? `${fighter.name} ya estaba en el pacto. Un duplicado sube una estrella y da ${card.orbs} orbes de ki.`
+              : `${fighter.name} ya tiene 5 estrellas. El duplicado solo da orbes: ${card.orbs}.`
+            : `${fighter.name} entra al pacto. Rareza ${fighter.rarity}.`}
+        </p>
+        <Btn
+          onClick={() => {
+            sfx("click");
+            setCard(null);
+            if (rite >= RITE_IDS.length) onDone();
+          }}
+        >
+          {rite >= RITE_IDS.length ? "Qué es un duplicado" : "Siguiente cristal"}
+        </Btn>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs uppercase tracking-widest text-gold">Guía · cristal {rite + 1} de 3</p>
+      <p className="font-display text-5xl uppercase leading-none">{plan.title}</p>
+      <p className="text-sm">{plan.body}</p>
+      <Btn
+        onClick={() => {
+          sfx("click");
+          setOpen(true);
+        }}
+      >
+        Romper el cristal
+      </Btn>
+    </div>
+  );
+}
+
+function DuplicateLesson({ onDone }: { onDone: () => void }) {
+  return (
+    <div className="space-y-4">
+      <p className="text-xs uppercase tracking-widest text-gold">Guía · duplicados</p>
+      <p className="font-display text-5xl uppercase leading-none">Si se repite</p>
+      <p className="text-sm">El cristal a veces devuelve a quien ya está en el pacto. No se descarta. Un duplicado sube una estrella, hasta 5, y da orbes de ki.</p>
+      <ul className="space-y-2 text-sm text-muted">
+        <li>Orbes por duplicado: R 22, SR 48, SSR 110, UR 240.</li>
+        <li>A 5 estrellas ya no sube más. Solo orbes, y un poco más: R 33, SR 72, SSR 165, UR 360.</li>
+        <li>Cada estrella suma cerca de un 8% de vida, ataque y defensa, y 1 de velocidad.</li>
+        <li>El dojo gasta orbes para subir el nivel, no las estrellas. El nivel llega a 25.</li>
+      </ul>
+      <Btn
+        onClick={() => {
+          sfx("click");
+          onDone();
+        }}
+      >
+        Entendido
+      </Btn>
     </div>
   );
 }

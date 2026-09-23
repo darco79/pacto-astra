@@ -1,3 +1,5 @@
+import type { Rarity } from "./types";
+
 let ctx: AudioContext | null = null;
 let enabled = true;
 
@@ -65,6 +67,35 @@ function blip(freq: number, dur: number, type: OscillatorType, vol: number, slid
   osc.connect(gain).connect(ctx.destination);
   osc.start(now);
   osc.stop(now + dur + 0.02);
+}
+
+export function sfxCrystal(rarity: Rarity) {
+  if (!enabled) return;
+  unlockAudio();
+  const rank = rarity === "UR" ? 3 : rarity === "SSR" ? 2 : rarity === "SR" ? 1 : 0;
+  crack(rank);
+  blip(90 + rank * 24, 0.16, "square", 0.04, -70);
+  const notes = rarity === "R" ? [494] : rarity === "SR" ? [523, 659] : rarity === "SSR" ? [523, 659, 784, 1046] : [523, 659, 784, 1046, 1318];
+  notes.forEach((freq, index) => {
+    setTimeout(() => blip(freq, 0.12 + rank * 0.02, "triangle", 0.05), 80 + index * 90);
+  });
+}
+
+function crack(rank: number) {
+  if (!ctx || !enabled || ctx.state !== "running") return;
+  const length = Math.floor(ctx.sampleRate * (0.12 + rank * 0.04));
+  const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / length) ** 2;
+  const source = ctx.createBufferSource();
+  const filter = ctx.createBiquadFilter();
+  const gain = ctx.createGain();
+  source.buffer = buffer;
+  filter.type = "bandpass";
+  filter.frequency.value = 900 + rank * 280;
+  gain.gain.value = 0.08 + rank * 0.03;
+  source.connect(filter).connect(gain).connect(ctx.destination);
+  source.start();
 }
 
 export function sfx(kind: "click" | "hit" | "ult" | "heal" | "ko" | "pull" | "rare" | "win" | "deny") {

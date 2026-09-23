@@ -1,5 +1,5 @@
 import { KIT } from "./roster";
-import type { ChoiceMod, Element, Kit, SkillKind } from "./types";
+import type { BattleSetup, ChoiceMod, Element, Kit, SkillKind } from "./types";
 
 export type EnemyTemplate = {
   id: string;
@@ -341,6 +341,29 @@ export const CHAPTERS: Chapter[] = [
     replay: { crystals: 90, orbs: 24 },
   },
 ];
+
+export function fightXp(rewards: { crystals: number; orbs: number }, first: boolean) {
+  const base = Math.round(rewards.crystals * 0.5 + rewards.orbs * 4);
+  return Math.max(8, first ? base : Math.round(base * 0.5));
+}
+
+export function nextChapterBattle(chapterId: string | null): BattleSetup | null {
+  if (!chapterId) return null;
+  const index = CHAPTERS.findIndex((chapter) => chapter.id === chapterId);
+  const next = index >= 0 ? CHAPTERS[index + 1] : undefined;
+  if (!next) return null;
+  const choice = next.choices[0];
+  return {
+    chapterId: next.id,
+    title: next.title,
+    place: next.place,
+    mod: choice?.id ?? null,
+    modLabel: choice?.label ?? "",
+    spawns: next.spawns,
+    rewards: next.rewards,
+    replay: next.replay,
+  };
+}
 
 export const WELL = {
   title: "Jefe del pozo",

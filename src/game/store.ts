@@ -34,6 +34,8 @@ export type SaveData = {
   claimed: string[];
   duty: Duty;
   bossDay: string;
+  rite: number;
+  xp: number;
 };
 
 type Actions = {
@@ -43,13 +45,15 @@ type Actions = {
   claimMission: (id: string) => boolean;
   setSlot: (index: number, id: string | null) => void;
   levelUp: (id: string) => boolean;
-  grantVictory: (payload: { chapterId: string | null; crystals: number; orbs: number; grant?: string }) => void;
+  grantVictory: (payload: { chapterId: string | null; crystals: number; orbs: number; grant?: string; xp?: number }) => void;
   seeIntro: () => void;
+  breakRite: () => PullCard | null;
   toggleSfx: () => void;
   toggleShake: () => void;
   setSpeed: (speed: 1 | 2) => void;
   syncAchievements: () => Achievement[];
   reset: () => void;
+  replaceSave: (data: SaveData) => void;
 };
 
 export type GameStore = SaveData & Actions;
@@ -60,15 +64,14 @@ export function localDay(date = new Date()) {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
+export const RITE_IDS = ["lira", "mira", "sable"] as const;
+
 function fresh(): SaveData {
   return {
     crystals: 1500,
     orbs: 24,
-    owned: {
-      lira: { level: 1, stars: 1 },
-      mira: { level: 1, stars: 1 },
-    },
-    team: ["lira", "mira", null],
+    owned: {},
+    team: [null, null, null],
     cleared: [],
     pity: 0,
     pulls: 0,
@@ -81,6 +84,8 @@ function fresh(): SaveData {
     claimed: [],
     duty: blankDuty(),
     bossDay: "",
+    rite: 0,
+    xp: 0,
   };
 }
 
@@ -137,6 +142,13 @@ function applyPulls(state: SaveData, ids: string[], pity: number, spent: number,
       pulls: state.pulls + (countPulls ? ids.length : 0),
     },
   };
+}
+
+function migrated(data: SaveData, version: number): SaveData {
+  if (version >= 4 && typeof data.rite === "number") return data;
+  const progressed = (data.pulls ?? 0) > 0 || (data.cleared?.length ?? 0) > 0 || (data.wins ?? 0) > 0 || Object.keys(data.owned ?? {}).length > 2;
+  if (!progressed) return { ...data, owned: {}, team: [null, null, null], rite: 0, introSeen: false, xp: data.xp ?? 0 };
+  return { ...data, rite: 3, xp: data.xp ?? 0 };
 }
 
 const memoryStorage = {
@@ -239,9 +251,18 @@ export const useGame = create<GameStore>()(
             wins: state.wins + 1,
             duty: { ...duty, wins: duty.wins + 1 },
             bossDay: payload.chapterId === "pozo" ? localDay() : state.bossDay,
+            xp: (state.xp ?? 0) + (payload.xp ?? 0),
           };
         }),
       seeIntro: () => set({ introSeen: true }),
+      breakRite: () => {
+        const state = get();
+        const id = RITE_IDS[state.rite];
+        if (!id) return null;
+        const applied = applyPulls(state, [id], state.pity, 0, false);
+        set({ ...applied.save, rite: state.rite + 1 });
+        return applied.cards[0] ?? null;
+      },
       toggleSfx: () => set((state) => ({ sfx: !state.sfx })),
       toggleShake: () => set((state) => ({ shake: !state.shake })),
       setSpeed: (speed) => set({ speed }),
@@ -264,25 +285,48 @@ export const useGame = create<GameStore>()(
           claimed: state.claimed,
           duty: state.duty,
           bossDay: state.bossDay,
+          rite: state.rite,
+          xp: state.xp ?? 0,
         });
         if (!next.earned.length) return [];
         set({ claimed: next.save.claimed, crystals: next.save.crystals });
         return next.earned;
       },
       reset: () => set(fresh()),
+      replaceSave: (data) =>
+        set({
+          crystals: data.crystals,
+          orbs: data.orbs,
+          owned: data.owned,
+          team: data.team,
+          cleared: data.cleared,
+          pity: data.pity,
+          pulls: data.pulls,
+          daily: data.daily,
+          introSeen: data.introSeen,
+          sfx: data.sfx,
+          shake: data.shake,
+          speed: data.speed,
+          wins: data.wins,
+          claimed: data.claimed,
+          duty: data.duty,
+          bossDay: data.bossDay,
+          rite: data.rite,
+          xp: data.xp ?? 0,
+        }),
     }),
     {
       name: "pacto-astra-v1",
-      version: 3,
+      version: 4,
       skipHydration: true,
       storage: createJSONStorage(() => (typeof window === "undefined" ? memoryStorage : localStorage)),
       migrate: (persisted, version) => {
         const data = persisted as SaveData;
         const withWins = version < 2 ? { ...data, wins: data.wins ?? data.cleared?.length ?? 0, claimed: data.claimed ?? [] } : data;
         if (version < 3) {
-          return { ...withWins, duty: withWins.duty ?? blankDuty(), bossDay: withWins.bossDay ?? "", introSeen: false };
+          return migrated({ ...withWins, duty: withWins.duty ?? blankDuty(), bossDay: withWins.bossDay ?? "", introSeen: false }, 3);
         }
-        return withWins;
+        return migrated(withWins, version);
       },
       partialize: (state) => ({
         crystals: state.crystals,
@@ -301,6 +345,8 @@ export const useGame = create<GameStore>()(
         claimed: state.claimed,
         duty: state.duty,
         bossDay: state.bossDay,
+        rite: state.rite,
+        xp: state.xp ?? 0,
       }),
       onRehydrateStorage: () => () => {
         const state = useGame.getState();
@@ -308,7 +354,7 @@ export const useGame = create<GameStore>()(
           const id = state.team[index];
           return id && state.owned[id] ? id : null;
         }) as Team;
-        useGame.setState({ team });
+        useGame.setState({ team, xp: state.xp ?? 0 });
       },
     },
   ),

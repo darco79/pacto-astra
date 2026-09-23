@@ -1,5 +1,5 @@
 import { ENEMIES } from "./content";
-import type { Synergy } from "./synergy";
+import type { LeaderAura, Synergy } from "./synergy";
 import { FIGHTER, hasAdvantage, statsOf } from "./roster";
 import type {
   BattleState,
@@ -282,7 +282,13 @@ function commitLogs(state: BattleState, events: Ev[]) {
   state.log = state.log.slice(-36);
 }
 
-export function startBattle(opts: { allies: Unit[]; enemies: Unit[]; mod: ChoiceMod | null; synergy?: Synergy | null }): BattleState {
+export function startBattle(opts: {
+  allies: Unit[];
+  enemies: Unit[];
+  mod: ChoiceMod | null;
+  synergy?: Synergy | null;
+  leader?: LeaderAura | null;
+}): BattleState {
   const allies = clone(opts.allies);
   const enemies = clone(opts.enemies);
   const events: Ev[] = [{ t: "log", text: "El anillo se enciende." }];
@@ -306,6 +312,14 @@ export function startBattle(opts: { allies: Unit[]; enemies: Unit[]; mod: Choice
       if (opts.synergy.shield) unit.shield = Math.max(unit.shield, Math.round(unit.maxHp * opts.synergy.shield));
     }
     events.push({ t: "log", text: "Asalto, guardiana y soporte. Entran cubiertas y con ki de más." });
+  }
+  if (opts.leader && (opts.leader.atk > 0 || opts.leader.ki > 0 || opts.leader.shield > 0)) {
+    for (const unit of allies) {
+      if (opts.leader.atk) unit.atk = Math.round(unit.atk * (1 + opts.leader.atk));
+      if (opts.leader.ki) unit.ki = Math.min(100, unit.ki + opts.leader.ki);
+      if (opts.leader.shield) unit.shield += Math.round(unit.maxHp * opts.leader.shield);
+    }
+    events.push({ t: "log", text: opts.leader.note });
   }
   const state: BattleState = {
     units: [...allies, ...enemies],
