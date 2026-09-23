@@ -49,6 +49,7 @@ function Play() {
   const [setup, setSetup] = useState<BattleSetup | null>(null);
   const [settings, setSettings] = useState(false);
   const [toast, setToast] = useState<string[] | null>(null);
+  const [atTitle, setAtTitle] = useState(true);
 
   useEffect(() => {
     setSfxEnabled(sfxOn);
@@ -82,6 +83,24 @@ function Play() {
     const timer = window.setTimeout(() => setToast(null), 4200);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  if (atTitle) {
+    return (
+      <main className="relative min-h-dvh">
+        <Backdrop />
+        <TitleScreen
+          onBegin={() => {
+            unlockAudio();
+            setSetup(null);
+            setScreen("hub");
+            setSettings(false);
+            setAtTitle(false);
+          }}
+        />
+        <AwardToast lines={toast} />
+      </main>
+    );
+  }
 
   if (!introSeen || rite < 3) {
     return (
@@ -167,6 +186,120 @@ function Play() {
       {settings ? <SettingsSheet onClose={() => setSettings(false)} /> : null}
       <AwardToast lines={toast} />
     </main>
+  );
+}
+
+function TitleScreen({ onBegin }: { onBegin: () => void }) {
+  const reset = useGame((state) => state.reset);
+  const pulls = useGame((state) => state.pulls);
+  const wins = useGame((state) => state.wins);
+  const cleared = useGame((state) => state.cleared);
+  const owned = useGame((state) => state.owned);
+  const rite = useGame((state) => state.rite);
+  const introSeen = useGame((state) => state.introSeen);
+  const [mode, setMode] = useState<"menu" | "load" | "confirm">("menu");
+  const [slots, setSlots] = useState<(SlotFile | null)[]>(() => listSlots());
+  const [note, setNote] = useState("");
+  const inProgress = introSeen || rite > 0 || pulls > 0 || wins > 0 || cleared.length > 0 || Object.keys(owned).length > 0;
+
+  function startNew() {
+    reset();
+    sfx("click");
+    onBegin();
+  }
+
+  function leaveGame() {
+    sfx("click");
+    window.close();
+    window.setTimeout(() => setNote("Si la ventana sigue abierta, ciérrala para salir."), 400);
+  }
+
+  return (
+    <div className="relative mx-auto flex min-h-dvh max-w-md flex-col justify-center px-6 py-10">
+      <p className="text-xs uppercase tracking-[0.35em] text-gold">Crónicas de ki</p>
+      <h1 className="font-display text-7xl uppercase leading-none text-gold sm:text-8xl">Pacto Astra</h1>
+      <p className="mt-3 max-w-sm text-sm text-muted">Tres puestos. Un pacto. El Sindicato Nulo bebe los pozos.</p>
+      {note ? <p className="mt-4 text-sm text-gold">{note}</p> : null}
+      {mode === "menu" ? (
+        <div className="mt-8 grid gap-2">
+          <Btn
+            onClick={() => {
+              if (inProgress) {
+                sfx("click");
+                setMode("confirm");
+              } else startNew();
+            }}
+          >
+            Nueva partida
+          </Btn>
+          <Btn
+            tone="ghost"
+            onClick={() => {
+              setSlots(listSlots());
+              setNote("");
+              setMode("load");
+              sfx("click");
+            }}
+          >
+            Cargar partida
+          </Btn>
+          <Btn tone="ember" onClick={leaveGame}>
+            Salir del juego
+          </Btn>
+        </div>
+      ) : null}
+      {mode === "confirm" ? (
+        <div className="mt-8 grid gap-2">
+          <p className="text-sm text-muted">La partida en curso se sustituye. Las tres ranuras guardadas no se borran.</p>
+          <Btn onClick={startNew}>Empezar de cero</Btn>
+          <Btn tone="ghost" onClick={() => setMode("menu")}>
+            Volver
+          </Btn>
+        </div>
+      ) : null}
+      {mode === "load" ? (
+        <div className="mt-8 space-y-2">
+          {inProgress ? (
+            <Btn
+              onClick={() => {
+                sfx("click");
+                onBegin();
+              }}
+            >
+              Continuar la partida en curso
+            </Btn>
+          ) : null}
+          {slots.map((slot, index) => (
+            <div key={index} className="rounded-xl border border-line bg-surface/80 px-3 py-2 text-left">
+              <p className="font-display text-2xl uppercase leading-none">Ranura {index + 1}</p>
+              <p className="text-xs text-muted">
+                {slot ? `${new Date(slot.savedAt).toLocaleString()} · ${slot.data.wins} victorias · ${slot.data.crystals} cristales` : "Vacía"}
+              </p>
+              <Btn
+                tone="ghost"
+                className="mt-2 w-full text-xl"
+                disabled={!slot}
+                onClick={() => {
+                  if (!loadSlot(index)) {
+                    setNote("Esa ranura no se puede cargar.");
+                    sfx("deny");
+                    return;
+                  }
+                  sfx("click");
+                  onBegin();
+                }}
+              >
+                Cargar
+              </Btn>
+            </div>
+          ))}
+          {!slots.some(Boolean) ? <p className="text-sm text-muted">No hay ranuras. Dentro de una partida se guardan desde Ajustes.</p> : null}
+          <Btn tone="ghost" onClick={() => setMode("menu")}>
+            Volver
+          </Btn>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
