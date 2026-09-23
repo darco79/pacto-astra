@@ -1,0 +1,16 @@
+node_modules
+dist
+dist-desktop
+release
+.output
+.nitro
+.vercel
+.DS_Store
+*.log
+artifacts
+screenshots
+attachments
+
+.grok
+
+.node_modules.lock

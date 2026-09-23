@@ -1,0 +1,47 @@
+name: Build Windows exe
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  desktop:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Compilar el ejecutable
+        run: npm run desktop:build
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Publicar el .exe en Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-${{ github.sha }}
+          name: Pacto Astra ${{ github.sha }}
+          body: |
+            Ejecutable de Windows generado automáticamente.
+            - `PactoAstra-1.0.0.exe`: portable, se juega sin instalar.
+            - `PactoAstra-Setup-1.0.0.exe`: instalador.
+            El .exe no está firmado: Windows SmartScreen puede avisar la primera vez.
+          make_latest: true
+          fail_on_unmatched_files: true
+          files: release/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

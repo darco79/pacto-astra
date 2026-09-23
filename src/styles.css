@@ -1,0 +1,159 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Teko", sans-serif;
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --color-bg: #0c0a09;
+  --color-surface: #17130f;
+  --color-surface-2: #261f18;
+  --color-fg: #f6f1e7;
+  --color-muted: #a89b8c;
+  --color-line: #3a3128;
+  --color-gold: #f0b429;
+  --color-gold-2: #ffe08a;
+  --color-ink: #1a1204;
+  --color-ember: #ff5a36;
+  --radius-card: 1.15rem;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-gold);
+    outline-offset: 2px;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+}
+
+.scrim {
+  background: color-mix(in oklab, var(--color-bg) 84%, transparent);
+}
+
+.dock {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.micro {
+  font-size: 0.6875rem;
+  line-height: 1rem;
+}
+
+.floater {
+  animation: float-up 720ms ease-out forwards;
+}
+
+.shake {
+  animation: shake-x 280ms linear;
+}
+
+.flip-scene {
+  perspective: 900px;
+}
+
+.flip-inner {
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 560ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform: rotateY(180deg);
+}
+
+.flip-inner.show {
+  transform: rotateY(0deg);
+}
+
+.flip-face {
+  backface-visibility: hidden;
+}
+
+.flip-back {
+  position: absolute;
+  inset: 0;
+  transform: rotateY(180deg);
+}
+
+.live {
+  box-shadow: 0 0 0 2px var(--color-gold), 0 0 22px color-mix(in oklab, var(--color-gold) 45%, transparent);
+}
+
+.flash {
+  animation: flash-hit 180ms linear;
+}
+
+@keyframes float-up {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.92);
+  }
+  18% {
+    opacity: 1;
+    transform: translateY(0) scale(1.06);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-28px) scale(1);
+  }
+}
+
+@keyframes shake-x {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-7px);
+  }
+  40% {
+    transform: translateX(6px);
+  }
+  60% {
+    transform: translateX(-3px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+
+@keyframes flash-hit {
+  0% {
+    filter: brightness(1.8);
+  }
+  100% {
+    filter: brightness(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .floater,
+  .shake,
+  .flash,
+  .flip-inner {
+    animation: none !important;
+    transition: none !important;
+  }
+}
