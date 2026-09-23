@@ -24,7 +24,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "desktop:dev": "node scripts/desktop-dev.mjs",
-    "desktop:build": "node scripts/restore-assets.mjs && vite build --config vite.desktop.config.ts && electron-builder --win --x64"
+    "desktop:build": "node scripts/restore-assets.mjs && vite build --config vite.desktop.config.ts && electron-builder --win --x64 --publish never"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",
